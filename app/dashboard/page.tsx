@@ -17,11 +17,26 @@ export default function Dashboard() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
 
-  // 获取每日简报
+  // 获取每日简报: POST已加载的情报数据给Qwen生成摘要
   async function fetchBrief() {
     setBriefLoading(true);
     try {
-      const res = await fetch('/api/cron/daily-brief');
+      // 先尝试GET缓存
+      const cacheRes = await fetch('/api/cron/daily-brief');
+      if (cacheRes.ok) {
+        const cacheData = await cacheRes.json();
+        if (cacheData.ok && cacheData.brief) {
+          setBrief(cacheData.brief);
+          return;
+        }
+      }
+      // 缓存没有，POST当前数据让Qwen生成
+      if (allItems.length === 0) return;
+      const res = await fetch('/api/cron/daily-brief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: allItems.slice(0, 50) }),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.ok && data.brief) setBrief(data.brief);
