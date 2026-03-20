@@ -58,10 +58,10 @@ export async function GET(req: NextRequest) {
     items: items.slice(0, limit),
     total: items.length,
     cachedAt: new Date(lastFetchTime).toISOString(),
-    sources: {
-      dailyhot: cachedItems.filter(i => ['toutiao', 'weibo', 'zhihu', 'bilibili', 'douyin'].includes(i.source)).length,
-      github: cachedItems.filter(i => i.source === 'github').length,
-      rsshub: cachedItems.filter(i => i.source === 'web').length,
-    },
+    sources: (() => {
+      const s: Record<string, number> = {};
+      cachedItems.forEach(i => { s[i.source] = (s[i.source] || 0) + 1; });
+      return s;
+    })(),
   });
 }

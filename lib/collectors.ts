@@ -123,10 +123,10 @@ export async function collectHackerNews(): Promise<IntelItem[]> {
         sourceUrl: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
         industry: [],
         category: 'tech',
-        tags: ['HackerNews', '技术前沿', isRelevant(story.title) ? 'AI' : '科技'],
+        tags: ['HackerNews', '技术前沿', ...(isRelevant(story.title) ? ['行业相关'] : [])],
         metrics: { score: String(story.score), comments: String(story.descendants || 0) },
         createdAt: new Date(story.time * 1000).toISOString(),
-        importance: isRelevant(story.title) ? 1 : story.score > 200 ? 2 : 3,
+        importance: isRelevant(story.title) ? 2 : story.score > 500 ? 2 : 3,
       });
     }
   } catch (e) {
