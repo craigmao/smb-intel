@@ -62,26 +62,22 @@ export async function generateInsight(rawTitle: string, rawContent: string): Pro
 export async function generateDailyBrief(items: IntelItem[]): Promise<string> {
   const topItems = items
     .sort((a, b) => a.importance - b.importance)
-    .slice(0, 20)
+    .slice(0, 15)
     .map((it, i) => `${i + 1}. [${it.source}][${it.category}] ${it.title}`)
     .join('\n');
 
   const resp = await qwen.chat.completions.create({
-    model: 'qwen-plus',
+    model: 'qwen-turbo',
     temperature: 0.3,
-    max_tokens: 600,
+    max_tokens: 400,
     messages: [{
       role: 'system',
-      content: `你是酷家乐SMB事业部的首席情报官。根据今日采集的情报，生成一份晨间简报。
-要求：
-1. 用5-7个要点概括今日最重要的信号
-2. 每个要点一句话，标注信号来源平台
-3. 最后给出1条"今日建议行动"
-4. 语言风格：简洁、直接、有判断力，像给CEO的briefing
-5. 返回JSON格式: { "bullets": [{"text":"...", "source":"平台名"}], "action":"今日建议行动" }`
+      content: `你是酷家乐SMB情报官。根据情报生成晨间简报。
+要求：5-7个要点，每个一句话标注来源平台，最后1条建议行动。风格：简洁直接。
+返回JSON: { "bullets": [{"text":"...", "source":"平台名"}], "action":"建议行动" }`
     }, {
       role: 'user',
-      content: `今日情报（共${items.length}条，以下是TOP20）：\n${topItems}`
+      content: `今日情报TOP15：\n${topItems}`
     }],
     response_format: { type: 'json_object' },
   });
