@@ -1,7 +1,6 @@
 'use client';
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { PLATFORM_CONFIG, INDUSTRIES, IntelItem, IndustryL1 } from '@/lib/types';
-import { generateMockItems, MOCK_BRIEF } from '@/lib/mock-data';
 
 const PAGE_SIZE = 20;
 
@@ -10,8 +9,35 @@ export default function Dashboard() {
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [allItems, setAllItems] = useState<IntelItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
+  const [cachedAt, setCachedAt] = useState('');
 
-  const allItems = useMemo(() => generateMockItems(), []);
+  // 从 API 获取真实数据
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  async function fetchData(refresh = false) {
+    setLoading(true);
+    setError('');
+    try {
+      const url = `/api/intel?limit=500${refresh ? '&refresh=1' : ''}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const data = await res.json();
+      setAllItems(data.items || []);
+      setSourceCounts(data.sources || {});
+      setCachedAt(data.cachedAt || '');
+    } catch (e: any) {
+      setError(e.message || '数据加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const industries = Object.keys(INDUSTRIES);
   const categories = [
     { key: 'all', label: '全部' },
@@ -30,7 +56,7 @@ export default function Dashboard() {
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         return item.title.toLowerCase().includes(q) ||
-               item.summary.toLowerCase().includes(q) ||
+               (item.summary || '').toLowerCase().includes(q) ||
                item.tags.some(t => t.toLowerCase().includes(q));
       }
       return true;
@@ -39,10 +65,18 @@ export default function Dashboard() {
 
   const visible = filtered.slice(0, visibleCount);
   const hasMore = visibleCount < filtered.length;
-  const brief = MOCK_BRIEF;
   const pconf = PLATFORM_CONFIG;
 
   const resetPage = () => setVisibleCount(PAGE_SIZE);
+
+  // 按来源统计
+  const sourceStats = useMemo(() => {
+    const stats: Record<string, number> = {};
+    allItems.forEach(item => {
+      stats[item.source] = (stats[item.source] || 0) + 1;
+    });
+    return stats;
+  }, [allItems]);
 
   return (
     <div style={S.shell}>
@@ -57,11 +91,19 @@ export default function Dashboard() {
           <div style={{...S.navBtn, ...S.navActive}}>📡 情报雷达</div>
           <div style={S.navLabel}>快捷操作</div>
           <a href="/submit" style={{...S.navBtn, textDecoration:'none'}}>📤 上报情报</a>
+          <div style={S.navLabel}>数据源统计</div>
+          {Object.entries(sourceStats).map(([src, count]) => (
+            <div key={src} style={{...S.navBtn, fontSize:11, padding:'4px 10px', justifyContent:'space-between'}}>
+              <span>{pconf[src as keyof typeof pconf]?.icon} {pconf[src as keyof typeof pconf]?.label || src}</span>
+              <span style={{color:'#638cff',fontWeight:600}}>{count}</span>
+            </div>
+          ))}
         </nav>
         <div style={{padding:'12px 18px',borderTop:'1px solid rgba(255,255,255,.06)',fontSize:10,color:'#3d4f65'}}>
-          <div>每日自动刷新 · Qwen API 驱动</div>
-          <div style={{marginTop:4}}>数据源: 小红书·公众号·抖音·头条·视频号·微博·知乎·B站·GitHub</div>
-          <div style={{marginTop:4,color:'#638cff'}}>共 {allItems.length} 条情报</div>
+          <div>实时采集 · DailyHotApi + RSSHub + GitHub API</div>
+          <div style={{marginTop:4}}>数据源: 头条·微博·知乎·B站·抖音·GitHub·36氪·HN</div>
+          <div style={{marginTop:4,color:'#638cff'}}>共 {allItems.length} 条真实情报</div>
+          {cachedAt && <div style={{marginTop:2,color:'#3d4f65'}}>缓存于 {new Date(cachedAt).toLocaleTimeString('zh-CN')}</div>}
         </div>
       </aside>
 
@@ -70,42 +112,61 @@ export default function Dashboard() {
         {/* Header */}
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:20}}>
           <div>
-            <h1 style={{fontSize:18,fontWeight:700,color:'#f0f6fc',margin:0}}>📡 情报雷达</h1>
-            <p style={{fontSize:12,color:'#6b7a8d',margin:'2px 0 0'}}>全平台外部信号聚合 · 按细分行业过滤 · AI每日简报 · 共{allItems.length}条情报</p>
+            <h1 style={{fontSize:18,fontWeight:700,color:'#f0f6fc',margin:0}}>📡 情报雷达 — 实时数据</h1>
+            <p style={{fontSize:12,color:'#6b7a8d',margin:'2px 0 0'}}>
+              全平台真实信号聚合 · DailyHotApi + RSSHub + GitHub API · 共{allItems.length}条情报
+            </p>
           </div>
-          <div style={{fontSize:11,color:'#3d4f65'}}>
-            数据更新: {new Date().toLocaleDateString('zh-CN')}
-          </div>
+          <button
+            onClick={() => fetchData(true)}
+            disabled={loading}
+            style={{
+              padding:'6px 16px', borderRadius:6, fontSize:12, cursor:'pointer',
+              color: loading ? '#3d4f65' : '#638cff',
+              background: loading ? 'transparent' : 'rgba(99,140,255,.1)',
+              border: `1px solid ${loading ? 'rgba(255,255,255,.06)' : 'rgba(99,140,255,.2)'}`,
+              fontWeight:600,
+            }}
+          >
+            {loading ? '⏳ 采集中...' : '🔄 刷新数据'}
+          </button>
         </div>
 
-        {/* Daily Brief */}
-        <div style={S.briefCard}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-            <div style={{fontSize:14,fontWeight:700,color:'#f0f6fc'}}>🧠 AI 每日情报简报 — {brief.date}</div>
-            <div style={{fontSize:10,color:'#3d4f65'}}>生成于 {new Date(brief.generatedAt).toLocaleTimeString('zh-CN')}</div>
+        {/* Loading / Error */}
+        {loading && !allItems.length && (
+          <div style={{textAlign:'center',padding:'60px 0'}}>
+            <div style={{fontSize:32,marginBottom:12}}>📡</div>
+            <div style={{fontSize:14,color:'#638cff',fontWeight:600}}>正在从各平台实时采集数据...</div>
+            <div style={{fontSize:12,color:'#3d4f65',marginTop:8}}>首次加载需要 10-30 秒，正在调用 DailyHotApi + RSSHub + GitHub API</div>
           </div>
-          <ul style={{listStyle:'none',padding:0,margin:0}}>
-            {brief.bullets.map((b, i) => (
-              <li key={i} style={{padding:'6px 0 6px 16px',position:'relative',fontSize:12.5,color:'#c9d1d9',lineHeight:1.7}}>
-                <span style={{position:'absolute',left:0,color: b.importance === 1 ? '#f87171' : '#638cff',fontWeight:700}}>▸</span>
-                {b.text}
-                <span style={{marginLeft:6,fontSize:9,padding:'1px 5px',borderRadius:3,
-                  background: pconf[b.source]?.color ? `${pconf[b.source].color}20` : 'rgba(99,140,255,.12)',
-                  color: pconf[b.source]?.color || '#638cff',
-                }}>{pconf[b.source]?.icon} {pconf[b.source]?.label}</span>
-              </li>
+        )}
+        {error && (
+          <div style={{padding:16,borderRadius:8,background:'rgba(248,113,113,.1)',border:'1px solid rgba(248,113,113,.2)',marginBottom:16}}>
+            <div style={{fontSize:13,color:'#f87171'}}>⚠️ 数据采集异常: {error}</div>
+            <button onClick={() => fetchData(true)} style={{marginTop:8,padding:'4px 12px',borderRadius:4,fontSize:11,cursor:'pointer',color:'#f87171',background:'rgba(248,113,113,.1)',border:'1px solid rgba(248,113,113,.2)'}}>重试</button>
+          </div>
+        )}
+
+        {/* Source Stats Bar */}
+        {allItems.length > 0 && (
+          <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+            {Object.entries(sourceCounts).map(([src, count]) => (
+              <div key={src} style={{
+                padding:'6px 12px',borderRadius:6,fontSize:11,
+                background:'rgba(99,140,255,.08)',border:'1px solid rgba(99,140,255,.12)',
+                color:'#c9d1d9',
+              }}>
+                <span style={{fontWeight:600,color:'#638cff'}}>{count}</span> 条来自 {src}
+              </div>
             ))}
-          </ul>
-          <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(99,140,255,.15)',fontSize:12,color:'#638cff',fontWeight:600}}>
-            📌 {brief.fullSummary}
           </div>
-        </div>
+        )}
 
         {/* Search */}
         <div style={{marginBottom:12}}>
           <input
             type="text"
-            placeholder="🔍 搜索情报关键词（如：三维家、BIM、价格战、AI出图...）"
+            placeholder="🔍 搜索情报关键词（如：AI、装修、三维家、BIM、价格战...）"
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); resetPage(); }}
             style={S.searchInput}
@@ -149,7 +210,7 @@ export default function Dashboard() {
                 <span style={{fontSize:10,color:'#3d4f65'}}>{timeSince(item.createdAt)}</span>
                 <div style={{marginLeft:'auto',display:'flex',gap:8,fontSize:10,color:'#3d4f65'}}>
                   {Object.entries(item.metrics || {}).map(([k, v]) => (
-                    <span key={k}>{k} {v}</span>
+                    v ? <span key={k}>{k} {v}</span> : null
                   ))}
                 </div>
               </div>
@@ -197,7 +258,7 @@ export default function Dashboard() {
             — 已展示全部 {filtered.length} 条情报 —
           </div>
         )}
-        {filtered.length === 0 && (
+        {filtered.length === 0 && !loading && (
           <div style={{textAlign:'center',padding:'40px 0',fontSize:13,color:'#3d4f65'}}>
             暂无匹配的情报，请尝试调整筛选条件
           </div>
@@ -209,6 +270,7 @@ export default function Dashboard() {
 
 function timeSince(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (seconds < 0) return '刚刚';
   if (seconds < 60) return '刚刚';
   if (seconds < 3600) return Math.floor(seconds / 60) + '分钟前';
   if (seconds < 86400) return Math.floor(seconds / 3600) + '小时前';
@@ -223,10 +285,6 @@ const S: Record<string, React.CSSProperties> = {
   navBtn: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', color: '#6b7a8d', fontSize: 12.5, marginBottom: 2 },
   navActive: { background: 'rgba(99,140,255,.12)', color: '#638cff', fontWeight: 600 },
   main: { padding: '20px 28px 40px', overflowY: 'auto' as const, color: '#c9d1d9' },
-  briefCard: {
-    background: 'linear-gradient(135deg, rgba(99,140,255,.12) 0%, rgba(99,140,255,.04) 100%)',
-    border: '1px solid rgba(99,140,255,.2)', borderRadius: 12, padding: 18, marginBottom: 20,
-  },
   searchInput: {
     width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 13,
     background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',

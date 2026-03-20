@@ -1,225 +1,312 @@
 /**
- * 数据采集器
- * 每个采集器负责一个平台，返回统一格式的 IntelItem[]
+ * 真实数据采集器
+ * - DailyHotApi: 头条/微博/知乎/B站/抖音 热榜 (公共实例)
+ * - RSSHub: 公众号/小红书/各平台 RSS (公共实例)
+ * - GitHub: 直接 REST API
  *
- * 生产环境中：
- * - 小红书/抖音/微博/知乎/B站 → 调用 MediaCrawler 的 API
- * - 微信公众号 → 调用 wewe-rss 或 wechat-article-exporter 的 API
- * - 热榜聚合 → 调用 DailyHotApi
- * - 全网搜索 → 调用 SearXNG 自建实例 或 RSSHub
- * - GitHub → 直接调用 GitHub REST API
- *
- * MVP阶段：先用 GitHub API + DailyHotApi 演示端到端流程
+ * 所有采集器返回统一 IntelItem[] 格式
  */
-import { IntelItem, PlatformSource, MONITOR_KEYWORDS } from './types';
-import { classifyIntel, generateInsight } from './qwen';
+import { IntelItem, PlatformSource, IndustryL1, MONITOR_KEYWORDS } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 
-// ===== GitHub 搜索 (直接可用) =====
+// 家居行业相关关键词（用于过滤热榜）
+const RELEVANCE_KEYWORDS = [
+  ...MONITOR_KEYWORDS.brand,
+  ...MONITOR_KEYWORDS.competitors,
+  ...MONITOR_KEYWORDS.industry,
+  ...MONITOR_KEYWORDS.tech,
+  ...MONITOR_KEYWORDS.signals,
+  '装修', '家居', '设计', '定制', '家具', 'AI', '智能家居', '建材',
+  '家装', '全屋', '软装', '硬装', '整装', '门窗', '橱柜', '衣柜',
+  '瓷砖', '地板', '涂料', '灯具', '卫浴', '厨电', '暖通',
+  '房地产', '楼市', '精装', '毛坯', '二手房', '新房',
+  '数字化', '3D', 'BIM', 'VR', '渲染', 'CAD', 'SaaS',
+];
+
+function isRelevant(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return RELEVANCE_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+}
+
+// ===== DailyHotApi 热榜 (公共实例) =====
+const DAILYHOT_BASE = 'https://hot.imsyy.top';
+
+interface HotItem {
+  title: string;
+  desc?: string;
+  url?: string;
+  mobileUrl?: string;
+  hot?: number | string;
+}
+
+async function fetchDailyHot(route: string): Promise<HotItem[]> {
+  try {
+    const res = await fetch(`${DAILYHOT_BASE}${route}?cache=true`, {
+      next: { revalidate: 1800 },
+      headers: { 'User-Agent': 'SMB-Intel/1.0' },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.data || []) as HotItem[];
+  } catch (e) {
+    console.error(`[DailyHot] Error fetching ${route}:`, e);
+    return [];
+  }
+}
+
+export async function collectDailyHot(): Promise<IntelItem[]> {
+  const platforms: { route: string; source: PlatformSource; label: string }[] = [
+    { route: '/toutiao',  source: 'toutiao',  label: '头条' },
+    { route: '/weibo',    source: 'weibo',    label: '微博' },
+    { route: '/zhihu',    source: 'zhihu',    label: '知乎' },
+    { route: '/bilibili', source: 'bilibili', label: 'B站' },
+    { route: '/douyin',   source: 'douyin',   label: '抖音' },
+    { route: '/baidu',    source: 'web',      label: '百度' },
+  ];
+
+  const items: IntelItem[] = [];
+  const results = await Promise.allSettled(
+    platforms.map(p => fetchDailyHot(p.route))
+  );
+
+  for (let i = 0; i < platforms.length; i++) {
+    const p = platforms[i];
+    const result = results[i];
+    if (result.status !== 'fulfilled') continue;
+
+    const hotItems = result.value;
+    // 取前30条，过滤相关的
+    for (const h of hotItems.slice(0, 30)) {
+      const title = h.title || h.desc || '';
+      if (!title) continue;
+
+      // 对于家居行业情报，先做宽松匹配，后续 AI 分类会进一步筛选
+      // 这里保留所有热榜条目（因为数量有限），标记相关性
+      const relevant = isRelevant(title);
+
+      items.push({
+        id: uid(),
+        title: `${title}`,
+        summary: '', // 后续 AI 填充
+        source: p.source,
+        sourceUrl: h.url || h.mobileUrl || '',
+        industry: [],
+        category: 'market',
+        tags: [p.label],
+        metrics: { 热度: String(h.hot || '') },
+        createdAt: now(),
+        importance: relevant ? 2 : 3,
+      });
+    }
+  }
+
+  console.log(`[DailyHot] Collected ${items.length} items`);
+  return items;
+}
+
+// ===== GitHub API 搜索 =====
 export async function collectGitHub(): Promise<IntelItem[]> {
-  const keywords = [...MONITOR_KEYWORDS.tech, 'interior design AI', 'BIM open source'];
+  const keywords = [
+    '3D interior design',
+    'AI interior design',
+    'BIM open source',
+    'home decoration AI',
+    'furniture customization',
+    'room layout generator',
+    'kitchen design',
+    '酷家乐',
+    'three.js interior',
+    'parametric furniture',
+  ];
+
   const items: IntelItem[] = [];
 
-  for (const kw of keywords.slice(0, 3)) { // 限制请求量
+  for (const kw of keywords) {
     try {
       const res = await fetch(
-        `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}&sort=updated&order=desc&per_page=3`,
-        { headers: { 'Accept': 'application/vnd.github+json' }, next: { revalidate: 3600 } }
+        `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}&sort=updated&order=desc&per_page=5`,
+        {
+          headers: { 'Accept': 'application/vnd.github+json' },
+          next: { revalidate: 3600 },
+        }
       );
+      if (!res.ok) continue;
       const data = await res.json();
-      for (const repo of (data.items || []).slice(0, 3)) {
+      for (const repo of (data.items || []).slice(0, 5)) {
         items.push({
           id: uid(),
-          title: `[GitHub] ${repo.full_name}: ${repo.description || ''}`.slice(0, 200),
-          summary: `⭐${repo.stargazers_count} | ${repo.language || 'N/A'} | 最近更新 ${repo.updated_at?.slice(0, 10)}`,
+          title: `${repo.full_name}: ${repo.description || '(无描述)'}`.slice(0, 200),
+          summary: `⭐${repo.stargazers_count} | ${repo.language || 'N/A'} | Fork ${repo.forks_count} | 更新于 ${repo.updated_at?.slice(0, 10)}`,
           source: 'github',
           sourceUrl: repo.html_url,
           industry: ['定制家具'],
           category: 'tech',
-          tags: [kw, repo.language || 'code'].filter(Boolean),
+          tags: [kw, repo.language || 'code', repo.stargazers_count > 1000 ? '热门项目' : '新兴项目'],
           metrics: { stars: String(repo.stargazers_count), forks: String(repo.forks_count) },
-          createdAt: now(),
-          importance: repo.stargazers_count > 1000 ? 2 : 3,
+          createdAt: repo.updated_at || now(),
+          importance: repo.stargazers_count > 5000 ? 1 : repo.stargazers_count > 500 ? 2 : 3,
         });
       }
     } catch (e) {
-      console.error(`GitHub collect error for "${kw}":`, e);
+      console.error(`[GitHub] Error for "${kw}":`, e);
     }
   }
-  return items;
+
+  // 去重
+  const seen = new Set<string>();
+  const unique = items.filter(item => {
+    const key = item.sourceUrl || item.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  console.log(`[GitHub] Collected ${unique.length} items (${items.length} before dedup)`);
+  return unique;
 }
 
-// ===== DailyHotApi 热榜 (需部署 DailyHotApi 实例) =====
-export async function collectHotList(apiBase?: string): Promise<IntelItem[]> {
-  const base = apiBase || process.env.DAILYHOT_API_URL;
-  if (!base) return [];
+// ===== RSSHub 公共实例 =====
+const RSSHUB_BASE = 'https://rsshub.app';
 
-  const items: IntelItem[] = [];
-  // 支持的平台: toutiao, weibo, zhihu, bilibili, douyin 等
-  const platforms: { route: string; source: PlatformSource }[] = [
-    { route: '/toutiao', source: 'toutiao' },
-    { route: '/weibo',   source: 'weibo' },
-    { route: '/zhihu',   source: 'zhihu' },
-    { route: '/bilibili', source: 'bilibili' },
-  ];
-
-  for (const p of platforms) {
-    try {
-      const res = await fetch(`${base}${p.route}`, { next: { revalidate: 3600 } });
-      const data = await res.json();
-      const hotItems = (data.data || []).slice(0, 5);
-      for (const h of hotItems) {
-        // 过滤: 只要与家居行业相关的
-        const title = h.title || h.desc || '';
-        const isRelevant = Object.values(MONITOR_KEYWORDS)
-          .flat()
-          .some(kw => title.includes(kw));
-        if (!isRelevant) continue;
-        items.push({
-          id: uid(),
-          title: title.slice(0, 200),
-          summary: '', // 后续AI填充
-          source: p.source,
-          sourceUrl: h.url || h.mobileUrl || '',
-          industry: [],
-          category: 'market',
-          tags: [],
-          metrics: { hot: h.hot || h.score || '' },
-          createdAt: now(),
-          importance: 2,
-        });
-      }
-    } catch (e) {
-      console.error(`DailyHot collect error for ${p.route}:`, e);
-    }
-  }
-  return items;
+interface RSSItem {
+  title?: string;
+  description?: string;
+  link?: string;
+  pubDate?: string;
+  author?: string;
 }
 
-// ===== MediaCrawler API (需部署 MediaCrawler 实例) =====
-export async function collectMediaCrawler(apiBase?: string): Promise<IntelItem[]> {
-  const base = apiBase || process.env.MEDIACRAWLER_API_URL;
-  if (!base) return [];
-
-  const items: IntelItem[] = [];
-  // MediaCrawler 搜索接口示例
-  const platforms: { platform: string; source: PlatformSource }[] = [
-    { platform: 'xhs',    source: 'xiaohongshu' },
-    { platform: 'dy',     source: 'douyin' },
-    { platform: 'weibo',  source: 'weibo' },
-  ];
-
-  for (const p of platforms) {
-    for (const kw of MONITOR_KEYWORDS.brand.concat(MONITOR_KEYWORDS.competitors).slice(0, 3)) {
-      try {
-        const res = await fetch(`${base}/api/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform: p.platform, keyword: kw, limit: 5 }),
-        });
-        const data = await res.json();
-        for (const post of (data.data || [])) {
-          items.push({
-            id: uid(),
-            title: (post.title || post.desc || '').slice(0, 200),
-            summary: '', // 后续AI填充
-            source: p.source,
-            sourceUrl: post.url || '',
-            industry: [],
-            category: 'market',
-            tags: [kw],
-            metrics: {
-              likes: String(post.likes || post.digg_count || 0),
-              comments: String(post.comments || post.comment_count || 0),
-            },
-            createdAt: now(),
-            importance: 2,
-          });
-        }
-      } catch (e) {
-        console.error(`MediaCrawler error [${p.platform}/${kw}]:`, e);
-      }
-    }
-  }
-  return items;
-}
-
-// ===== wewe-rss 微信公众号 (需部署 wewe-rss 实例) =====
-export async function collectWeChatRSS(apiBase?: string): Promise<IntelItem[]> {
-  const base = apiBase || process.env.WEWE_RSS_URL;
-  if (!base) return [];
-
-  const items: IntelItem[] = [];
-  // wewe-rss 提供 RSS feed，可用标准 RSS 解析
+async function fetchRSSHub(route: string): Promise<RSSItem[]> {
   try {
-    const res = await fetch(`${base}/feeds`, { next: { revalidate: 3600 } });
-    const feeds = await res.json();
-    for (const feed of (feeds || []).slice(0, 20)) {
-      items.push({
-        id: uid(),
-        title: (feed.title || '').slice(0, 200),
-        summary: '',
-        source: 'wechat_mp',
-        sourceUrl: feed.link || '',
-        industry: [],
-        category: 'market',
-        tags: [feed.author || ''],
-        metrics: { reads: String(feed.read_count || 0) },
-        createdAt: feed.published || now(),
-        importance: 2,
-      });
+    const res = await fetch(`${RSSHUB_BASE}${route}`, {
+      headers: { 'Accept': 'application/json' },
+      next: { revalidate: 1800 },
+    });
+    if (!res.ok) return [];
+    const text = await res.text();
+
+    // RSSHub 支持 JSON 格式
+    try {
+      const json = JSON.parse(text);
+      return (json.items || []).map((item: any) => ({
+        title: item.title,
+        description: item.content_text || item.content_html || '',
+        link: item.url || item.external_url || '',
+        pubDate: item.date_published || '',
+        author: item.authors?.[0]?.name || '',
+      }));
+    } catch {
+      // 如果不是 JSON，解析 XML
+      return parseRSSXML(text);
     }
   } catch (e) {
-    console.error('WeChat RSS error:', e);
+    console.error(`[RSSHub] Error fetching ${route}:`, e);
+    return [];
+  }
+}
+
+function parseRSSXML(xml: string): RSSItem[] {
+  const items: RSSItem[] = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+  while ((match = itemRegex.exec(xml)) !== null) {
+    const block = match[1];
+    const getTag = (tag: string) => {
+      const m = block.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?<\\/${tag}>`, 's'));
+      return m ? m[1].trim() : '';
+    };
+    items.push({
+      title: getTag('title'),
+      description: getTag('description'),
+      link: getTag('link'),
+      pubDate: getTag('pubDate'),
+      author: getTag('author') || getTag('dc:creator'),
+    });
   }
   return items;
 }
 
-// ===== 聚合采集 + AI处理 =====
-export async function collectAll(): Promise<IntelItem[]> {
-  console.log('[Collector] Starting collection cycle...');
+export async function collectRSSHub(): Promise<IntelItem[]> {
+  // RSSHub 路由列表 - 家居/设计/科技相关
+  const feeds: { route: string; source: PlatformSource; label: string; topic: string }[] = [
+    // 知乎热门话题
+    { route: '/zhihu/hot', source: 'zhihu', label: '知乎热榜', topic: '热榜' },
+    { route: '/zhihu/topic/19550517', source: 'zhihu', label: '知乎-室内设计', topic: '室内设计' },
+    { route: '/zhihu/topic/19554859', source: 'zhihu', label: '知乎-装修', topic: '装修' },
+    // B站
+    { route: '/bilibili/ranking/0/3/1', source: 'bilibili', label: 'B站科技区', topic: '科技' },
+    // 微博热搜
+    { route: '/weibo/search/hot', source: 'weibo', label: '微博热搜', topic: '热搜' },
+    // 36kr
+    { route: '/36kr/newsflashes', source: 'web', label: '36氪快讯', topic: '科技商业' },
+    // 少数派
+    { route: '/sspai/matrix', source: 'web', label: '少数派', topic: '效率工具' },
+    // Hacker News
+    { route: '/hackernews/best', source: 'web', label: 'HackerNews', topic: '技术前沿' },
+    // Product Hunt
+    { route: '/producthunt/today', source: 'web', label: 'ProductHunt', topic: '新产品' },
+  ];
 
-  // 并行采集所有源
-  const [github, hotlist, media, wechat] = await Promise.allSettled([
+  const items: IntelItem[] = [];
+  const results = await Promise.allSettled(
+    feeds.map(f => fetchRSSHub(f.route))
+  );
+
+  for (let i = 0; i < feeds.length; i++) {
+    const f = feeds[i];
+    const result = results[i];
+    if (result.status !== 'fulfilled') continue;
+
+    for (const entry of result.value.slice(0, 15)) {
+      if (!entry.title) continue;
+
+      const desc = (entry.description || '')
+        .replace(/<[^>]*>/g, '')  // strip HTML
+        .slice(0, 200);
+
+      items.push({
+        id: uid(),
+        title: entry.title.slice(0, 200),
+        summary: desc,
+        source: f.source,
+        sourceUrl: entry.link || '',
+        industry: [],
+        category: 'market',
+        tags: [f.label, f.topic],
+        metrics: {},
+        createdAt: entry.pubDate ? new Date(entry.pubDate).toISOString() : now(),
+        importance: isRelevant(entry.title) ? 2 : 3,
+      });
+    }
+  }
+
+  console.log(`[RSSHub] Collected ${items.length} items`);
+  return items;
+}
+
+// ===== 聚合采集 =====
+export async function collectAll(): Promise<IntelItem[]> {
+  console.log('[Collector] Starting real collection cycle...');
+
+  const [hotlist, github, rsshub] = await Promise.allSettled([
+    collectDailyHot(),
     collectGitHub(),
-    collectHotList(),
-    collectMediaCrawler(),
-    collectWeChatRSS(),
+    collectRSSHub(),
   ]);
 
   const allItems: IntelItem[] = [
-    ...(github.status === 'fulfilled' ? github.value : []),
     ...(hotlist.status === 'fulfilled' ? hotlist.value : []),
-    ...(media.status === 'fulfilled' ? media.value : []),
-    ...(wechat.status === 'fulfilled' ? wechat.value : []),
+    ...(github.status === 'fulfilled' ? github.value : []),
+    ...(rsshub.status === 'fulfilled' ? rsshub.value : []),
   ];
 
-  console.log(`[Collector] Raw items: ${allItems.length}`);
+  console.log(`[Collector] Total raw items: ${allItems.length}`);
 
-  // AI 处理: 分类 + 生成洞察 (只处理缺失的)
-  for (const item of allItems) {
-    if (!item.industry.length || !item.tags.length) {
-      try {
-        const cls = await classifyIntel(item.title, item.summary || item.title);
-        item.industry = cls.industry;
-        item.category = cls.category;
-        item.tags = cls.tags;
-        item.importance = cls.importance;
-      } catch (e) {
-        console.error('[AI classify error]:', e);
-      }
-    }
-    if (!item.summary || item.summary.length < 10) {
-      try {
-        item.summary = await generateInsight(item.title, item.title);
-      } catch (e) {
-        console.error('[AI insight error]:', e);
-      }
-    }
-  }
+  // 按重要性排序（相关的在前）
+  allItems.sort((a, b) => a.importance - b.importance);
 
-  console.log(`[Collector] Processed items: ${allItems.length}`);
   return allItems;
 }
