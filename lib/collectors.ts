@@ -9,7 +9,7 @@
  * 环境变量:
  * CRAWLER_API_URL — 国内爬虫API地址, 如 https://your-crawler.example.com
  */
-import { IntelItem, PlatformSource, MONITOR_KEYWORDS } from './types';
+import { IntelItem, IntelCategory, PlatformSource, MONITOR_KEYWORDS } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
@@ -104,7 +104,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       const importance = isSearch ? 1 : (isRelevant(title) ? 2 : 4);
 
       // 分类: 搜索类按平台分; 热榜类统一归大盘
-      let category: string;
+      let category: IntelCategory;
       if (isSearch) {
         category = src === 'zhihu' ? 'user_voice' : src === 'bilibili' ? 'user_voice' : 'market';
       } else {
