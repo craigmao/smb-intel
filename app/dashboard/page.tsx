@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
-import { PLATFORM_CONFIG, INDUSTRIES, IntelItem, IndustryL1 } from '@/lib/types';
+import { PLATFORM_CONFIG, INDUSTRIES, IntelItem, IndustryL1, DailyBrief } from '@/lib/types';
 
 const PAGE_SIZE = 20;
 
@@ -14,6 +14,24 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
   const [cachedAt, setCachedAt] = useState('');
+  const [brief, setBrief] = useState<DailyBrief | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
+
+  // 获取每日简报
+  async function fetchBrief() {
+    setBriefLoading(true);
+    try {
+      const res = await fetch('/api/cron/daily-brief');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && data.brief) setBrief(data.brief);
+      }
+    } catch (e) {
+      console.error('Brief fetch error:', e);
+    } finally {
+      setBriefLoading(false);
+    }
+  }
 
   // 从 API 获取真实数据
   useEffect(() => {
@@ -100,8 +118,8 @@ export default function Dashboard() {
           ))}
         </nav>
         <div style={{padding:'12px 18px',borderTop:'1px solid rgba(255,255,255,.06)',fontSize:10,color:'#3d4f65'}}>
-          <div>实时采集 · DailyHotApi + RSSHub + GitHub API</div>
-          <div style={{marginTop:4}}>数据源: 头条·微博·知乎·B站·抖音·GitHub·36氪·HN</div>
+          <div>定向采集 · 微信搜索+B站+微博+知乎+头条+百度</div>
+          <div style={{marginTop:4}}>关键词: 竞品·行业趋势·客户动态</div>
           <div style={{marginTop:4,color:'#638cff'}}>共 {allItems.length} 条真实情报</div>
           {cachedAt && <div style={{marginTop:2,color:'#3d4f65'}}>缓存于 {new Date(cachedAt).toLocaleTimeString('zh-CN')}</div>}
         </div>
@@ -112,9 +130,9 @@ export default function Dashboard() {
         {/* Header */}
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:20}}>
           <div>
-            <h1 style={{fontSize:18,fontWeight:700,color:'#f0f6fc',margin:0}}>📡 情报雷达 — 实时数据</h1>
+            <h1 style={{fontSize:18,fontWeight:700,color:'#f0f6fc',margin:0}}>📡 酷家乐 SMB 情报雷达</h1>
             <p style={{fontSize:12,color:'#6b7a8d',margin:'2px 0 0'}}>
-              全平台真实信号聚合 · DailyHotApi + RSSHub + GitHub API · 共{allItems.length}条情报
+              定向采集: 竞品监控 · 行业趋势 · 客户动态 · 共{allItems.length}条情报
             </p>
           </div>
           <button
@@ -130,6 +148,35 @@ export default function Dashboard() {
           >
             {loading ? '⏳ 采集中...' : '🔄 刷新数据'}
           </button>
+        </div>
+
+        {/* Daily Brief */}
+        <div style={{marginBottom:20,padding:16,borderRadius:10,background:'linear-gradient(135deg,rgba(99,140,255,.12),rgba(59,130,246,.06))',border:'1px solid rgba(99,140,255,.18)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:brief?10:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:'#638cff'}}>📋 每日情报摘要</div>
+            <button
+              onClick={fetchBrief}
+              disabled={briefLoading}
+              style={{padding:'3px 10px',borderRadius:4,fontSize:11,cursor:'pointer',color:briefLoading?'#3d4f65':'#638cff',background:'transparent',border:'1px solid rgba(99,140,255,.2)',fontWeight:500}}
+            >
+              {briefLoading ? '生成中...' : brief ? '刷新' : '生成摘要'}
+            </button>
+          </div>
+          {brief && (
+            <div>
+              {brief.bullets.map((b, i) => (
+                <div key={i} style={{fontSize:12,color:'#c9d1d9',lineHeight:1.7,padding:'2px 0'}}>
+                  • {b.text} <span style={{fontSize:10,color:'#3d4f65'}}>({b.source})</span>
+                </div>
+              ))}
+              {brief.fullSummary && (
+                <div style={{marginTop:8,padding:'8px 12px',borderRadius:6,background:'rgba(251,191,36,.08)',border:'1px solid rgba(251,191,36,.15)',fontSize:12,color:'#fbbf24',fontWeight:500}}>
+                  💡 {brief.fullSummary}
+                </div>
+              )}
+              <div style={{fontSize:10,color:'#3d4f65',marginTop:6}}>生成于 {new Date(brief.generatedAt).toLocaleString('zh-CN')}</div>
+            </div>
+          )}
         </div>
 
         {/* Loading / Error */}
