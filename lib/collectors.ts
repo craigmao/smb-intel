@@ -53,35 +53,21 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
     const items: IntelItem[] = [];
     const sourceMap: Record<string, PlatformSource> = {
-      // 搜索类 (行业定向)
       wechat: 'wechat_mp',
       toutiao: 'toutiao',
       weibo: 'weibo',
       zhihu: 'zhihu',
       baidu: 'web',
       bilibili: 'bilibili',
-      douyin: 'douyin',
-      xiaohongshu: 'xiaohongshu',
-      // 热榜类 (大盘感知)
-      toutiao_hot: 'toutiao',
-      weibo_hot: 'weibo',
-      douyin_hot: 'douyin',
     };
 
     const labelMap: Record<string, string> = {
-      // 搜索类
       wechat: '微信公众号',
       toutiao: '头条搜索',
       weibo: '微博搜索',
       zhihu: '知乎搜索',
       baidu: '百度资讯',
       bilibili: 'B站搜索',
-      douyin: '抖音搜索',
-      xiaohongshu: '小红书',
-      // 热榜类
-      toutiao_hot: '头条热榜',
-      weibo_hot: '微博热搜',
-      douyin_hot: '抖音热搜',
     };
 
     for (const raw of (data.data || [])) {
@@ -89,7 +75,6 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       const title = raw.title || '';
       if (!title) continue;
 
-      const isSearch = !src.endsWith('_hot'); // 搜索类 vs 热榜类
       const metricsObj: Record<string, string> = {};
       if (raw.hot) metricsObj['热度'] = String(raw.hot);
       if (raw.view) metricsObj['播放'] = String(raw.view);
@@ -99,14 +84,20 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       if (raw.comments) metricsObj['评论'] = String(raw.comments);
       if (raw.reposts) metricsObj['转发'] = String(raw.reposts);
 
-      // 搜索类数据已经是行业定向的, 默认高相关性
-      // 热榜类数据需要通过关键词匹配判断相关性
-      const importance: 1 | 2 | 3 = isSearch ? 1 : (isRelevant(title) ? 2 : 3);
+      // 全部为定向搜索数据, 行业相关性高
+      const importance: 1 | 2 | 3 = isRelevant(title) ? 1 : 2;
 
-      // 分类: 搜索类按平台分; 热榜类统一归大盘
+      // 按平台和关键词推断分类
+      const kw = raw.keyword || '';
       let category: IntelCategory;
-      if (isSearch) {
-        category = src === 'zhihu' ? 'user_voice' : src === 'bilibili' ? 'user_voice' : 'market';
+      if (['酷家乐','三维家','躺平设计家','打扮家'].some(b => kw.includes(b) || title.includes(b))) {
+        category = 'competitor';
+      } else if (src === 'zhihu' || src === 'bilibili') {
+        category = 'user_voice';
+      } else if (kw.includes('政策') || title.includes('政策') || title.includes('法规')) {
+        category = 'policy';
+      } else if (kw.includes('AI') || kw.includes('数字化') || kw.includes('ERP') || kw.includes('BIM')) {
+        category = 'tech';
       } else {
         category = 'market';
       }
