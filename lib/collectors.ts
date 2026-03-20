@@ -64,6 +64,8 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
     // v4 数据源映射
     const sourceMap: Record<string, PlatformSource> = {
       google_news: 'web',
+      baidu_news: 'web',
+      bing_news: 'web',
       '36kr': 'web',
       wechat: 'wechat_mp',
       bilibili: 'bilibili',
@@ -72,6 +74,8 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
     const labelMap: Record<string, string> = {
       google_news: '新闻',
+      baidu_news: '百度新闻',
+      bing_news: '必应新闻',
       '36kr': '36氪',
       wechat: '微信公众号',
       bilibili: 'B站',
@@ -109,7 +113,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
       const tags = [labelMap[src] || src];
       if (raw.keyword && raw.keyword !== '36kr') tags.push(raw.keyword);
-      if (raw.media && src === 'google_news') tags.push(raw.media);
+      if (raw.media && ['google_news', 'baidu_news', 'bing_news'].includes(src)) tags.push(raw.media);
 
       items.push({
         id: uid(),
