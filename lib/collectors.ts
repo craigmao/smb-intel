@@ -53,29 +53,33 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
     const items: IntelItem[] = [];
     const sourceMap: Record<string, PlatformSource> = {
+      // 搜索类 (行业定向)
       toutiao: 'toutiao',
       weibo: 'weibo',
       zhihu: 'zhihu',
       baidu: 'web',
       bilibili: 'bilibili',
       douyin: 'douyin',
-      sspai: 'web',
-      juejin: 'web',
-      '36kr': 'web',
       xiaohongshu: 'xiaohongshu',
+      // 热榜类 (大盘感知)
+      toutiao_hot: 'toutiao',
+      weibo_hot: 'weibo',
+      douyin_hot: 'douyin',
     };
 
     const labelMap: Record<string, string> = {
-      toutiao: '头条热榜',
-      weibo: '微博热搜',
-      zhihu: '知乎热榜',
-      baidu: '百度热搜',
-      bilibili: 'B站热门',
-      douyin: '抖音热搜',
-      sspai: '少数派',
-      juejin: '掘金',
-      '36kr': '36氪快讯',
+      // 搜索类
+      toutiao: '头条搜索',
+      weibo: '微博搜索',
+      zhihu: '知乎搜索',
+      baidu: '百度资讯',
+      bilibili: 'B站搜索',
+      douyin: '抖音搜索',
       xiaohongshu: '小红书',
+      // 热榜类
+      toutiao_hot: '头条热榜',
+      weibo_hot: '微博热搜',
+      douyin_hot: '抖音热搜',
     };
 
     for (const raw of (data.data || [])) {
@@ -83,6 +87,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       const title = raw.title || '';
       if (!title) continue;
 
+      const isSearch = !src.endsWith('_hot'); // 搜索类 vs 热榜类
       const metricsObj: Record<string, string> = {};
       if (raw.hot) metricsObj['热度'] = String(raw.hot);
       if (raw.view) metricsObj['播放'] = String(raw.view);
@@ -90,6 +95,23 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       if (raw.danmaku) metricsObj['弹幕'] = String(raw.danmaku);
       if (raw.likes) metricsObj['赞'] = String(raw.likes);
       if (raw.comments) metricsObj['评论'] = String(raw.comments);
+      if (raw.reposts) metricsObj['转发'] = String(raw.reposts);
+
+      // 搜索类数据已经是行业定向的, 默认高相关性
+      // 热榜类数据需要通过关键词匹配判断相关性
+      const importance = isSearch ? 1 : (isRelevant(title) ? 2 : 4);
+
+      // 分类: 搜索类按平台分; 热榜类统一归大盘
+      let category: string;
+      if (isSearch) {
+        category = src === 'zhihu' ? 'user_voice' : src === 'bilibili' ? 'user_voice' : 'market';
+      } else {
+        category = 'market';
+      }
+
+      const tags = [labelMap[src] || src];
+      if (raw.keyword) tags.push(raw.keyword);
+      if (raw.owner) tags.push(raw.owner);
 
       items.push({
         id: uid(),
@@ -98,11 +120,11 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
         source: sourceMap[src] || 'web',
         sourceUrl: raw.url || '',
         industry: [],
-        category: src === 'zhihu' ? 'user_voice' : src === 'juejin' || src === 'sspai' ? 'tech' : 'market',
-        tags: [labelMap[src] || src, ...(raw.owner ? [raw.owner] : [])],
+        category,
+        tags,
         metrics: metricsObj,
         createdAt: raw.time || now(),
-        importance: isRelevant(title) ? 1 : 3,
+        importance,
       });
     }
 
