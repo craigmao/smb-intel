@@ -15,7 +15,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 
-const CRAWLER_API = process.env.CRAWLER_API_URL || '';
+const CRAWLER_API = process.env.CRAWLER_API_URL || 'http://47.103.217.133:8000';
 
 const RELEVANCE_KW = [
   ...MONITOR_KEYWORDS.brand,
