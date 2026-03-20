@@ -67,6 +67,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       baidu_news: 'web',
       bing_news: 'web',
       '36kr': 'web',
+      huxiu: 'web',
       wechat: 'wechat_mp',
       bilibili: 'bilibili',
       baidu: 'web',
@@ -77,6 +78,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       baidu_news: '百度新闻',
       bing_news: '必应新闻',
       '36kr': '36氪',
+      huxiu: '虎嗅',
       wechat: '微信公众号',
       bilibili: 'B站',
       baidu: '百度',
@@ -113,7 +115,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
       const tags = [labelMap[src] || src];
       if (raw.keyword && raw.keyword !== '36kr') tags.push(raw.keyword);
-      if (raw.media && ['google_news', 'baidu_news', 'bing_news'].includes(src)) tags.push(raw.media);
+      if (raw.media && ['google_news', 'baidu_news', 'bing_news', 'huxiu'].includes(src)) tags.push(raw.media);
 
       items.push({
         id: uid(),
