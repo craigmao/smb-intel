@@ -184,7 +184,7 @@ export default function Dashboard() {
           <div style={{textAlign:'center',padding:'60px 0'}}>
             <div style={{fontSize:32,marginBottom:12}}>📡</div>
             <div style={{fontSize:14,color:'#638cff',fontWeight:600}}>正在从各平台实时采集数据...</div>
-            <div style={{fontSize:12,color:'#3d4f65',marginTop:8}}>首次加载需要 10-30 秒，正在调用 DailyHotApi + RSSHub + GitHub API</div>
+            <div style={{fontSize:12,color:'#3d4f65',marginTop:8}}>首次加载需要 10-30 秒，正在从微信/B站/微博/知乎/头条/百度采集行业情报</div>
           </div>
         )}
         {error && (

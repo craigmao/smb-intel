@@ -13,6 +13,18 @@ import { IntelItem, IntelCategory, PlatformSource, MONITOR_KEYWORDS } from './ty
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
+
+/** 前端兜底: 解码常见 HTML 实体 */
+function decodeEntities(s: string): string {
+  if (!s) return s;
+  return s
+    .replace(/&ldquo;/g, '\u201c').replace(/&rdquo;/g, '\u201d')
+    .replace(/&lsquo;/g, '\u2018').replace(/&rsquo;/g, '\u2019')
+    .replace(/&middot;/g, '\u00b7').replace(/&mdash;/g, '\u2014').replace(/&ndash;/g, '\u2013')
+    .replace(/&hellip;/g, '\u2026').replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 
 const CRAWLER_API = process.env.CRAWLER_API_URL || 'http://47.103.217.133:8000';
@@ -108,8 +120,8 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
       items.push({
         id: uid(),
-        title,
-        summary: raw.desc || raw.excerpt || raw.summary || raw.label || '',
+        title: decodeEntities(title),
+        summary: decodeEntities(raw.desc || raw.excerpt || raw.summary || raw.label || ''),
         source: sourceMap[src] || 'web',
         sourceUrl: raw.url || '',
         industry: [],
