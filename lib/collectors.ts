@@ -1,20 +1,16 @@
 /**
- * 数据采集层
+ * 数据采集层 v4 — 新闻聚合架构
  *
  * 架构:
- * - 国内爬虫API (smb-crawler-api) 部署在国内服务器, 采集中文平台数据
- * - smb-intel (Vercel) 从爬虫API拉取数据, 做 AI 分类/展示
- * - 兜底: 如果爬虫API不可用, 用Vercel直连(部分平台可通)
- *
- * 环境变量:
- * CRAWLER_API_URL — 国内爬虫API地址, 如 https://your-crawler.example.com
+ * - 国内爬虫API (smb-crawler-api) → Google News RSS + 36kr + 搜狗微信 + B站
+ * - smb-intel (Vercel) 从爬虫API拉取数据, 做分类/展示
  */
 import { IntelItem, IntelCategory, PlatformSource, MONITOR_KEYWORDS } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 
-/** 前端兜底: 解码常见 HTML 实体 */
+/** 解码常见 HTML 实体 */
 function decodeEntities(s: string): string {
   if (!s) return s;
   return s
@@ -25,7 +21,6 @@ function decodeEntities(s: string): string {
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 
 const CRAWLER_API = process.env.CRAWLER_API_URL || 'http://47.103.217.133:8000';
 
@@ -49,7 +44,7 @@ function isRelevant(text: string): boolean {
 }
 
 // ============================================================
-// 模式一: 通过国内爬虫API采集 (推荐)
+// 从爬虫API采集 (v4: 新闻聚合)
 // ============================================================
 async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
   if (!CRAWLER_API) return [];
@@ -62,24 +57,25 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
     const data = await res.json();
 
     console.log(`[CrawlerAPI] Report:`, JSON.stringify(data.report || {}));
+    console.log(`[CrawlerAPI] Version: ${data.version || '?'}`);
 
     const items: IntelItem[] = [];
+
+    // v4 数据源映射
     const sourceMap: Record<string, PlatformSource> = {
+      google_news: 'web',
+      '36kr': 'web',
       wechat: 'wechat_mp',
-      toutiao: 'toutiao',
-      weibo: 'weibo',
-      zhihu: 'zhihu',
-      baidu: 'web',
       bilibili: 'bilibili',
+      baidu: 'web',
     };
 
     const labelMap: Record<string, string> = {
+      google_news: '新闻',
+      '36kr': '36氪',
       wechat: '微信公众号',
-      toutiao: '头条搜索',
-      weibo: '微博搜索',
-      zhihu: '知乎搜索',
-      baidu: '百度资讯',
-      bilibili: 'B站搜索',
+      bilibili: 'B站',
+      baidu: '百度',
     };
 
     for (const raw of (data.data || [])) {
@@ -91,44 +87,41 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
       if (raw.hot) metricsObj['热度'] = String(raw.hot);
       if (raw.view) metricsObj['播放'] = String(raw.view);
       if (raw.like) metricsObj['点赞'] = String(raw.like);
-      if (raw.danmaku) metricsObj['弹幕'] = String(raw.danmaku);
-      if (raw.likes) metricsObj['赞'] = String(raw.likes);
-      if (raw.comments) metricsObj['评论'] = String(raw.comments);
-      if (raw.reposts) metricsObj['转发'] = String(raw.reposts);
+      if (raw.media) metricsObj['媒体'] = raw.media;
 
-      // 全部为定向搜索数据, 行业相关性高
+      // 优先度: 高相关 = 1, 一般相关 = 2, 弱相关 = 3
       const importance: 1 | 2 | 3 = isRelevant(title) ? 1 : 2;
 
-      // 按平台和关键词推断分类
+      // 按关键词和标题推断分类
       const kw = raw.keyword || '';
       let category: IntelCategory;
-      if (['酷家乐','三维家','躺平设计家','打扮家'].some(b => kw.includes(b) || title.includes(b))) {
+      if (['酷家乐','三维家','躺平设计家','打扮家','家居云设计'].some(b => kw.includes(b) || title.includes(b))) {
         category = 'competitor';
-      } else if (src === 'zhihu' || src === 'bilibili') {
+      } else if (src === 'bilibili') {
         category = 'user_voice';
       } else if (kw.includes('政策') || title.includes('政策') || title.includes('法规')) {
         category = 'policy';
-      } else if (kw.includes('AI') || kw.includes('数字化') || kw.includes('ERP') || kw.includes('BIM')) {
+      } else if (kw.includes('AI') || kw.includes('数字化') || kw.includes('ERP') || kw.includes('BIM') || title.includes('AI')) {
         category = 'tech';
       } else {
         category = 'market';
       }
 
       const tags = [labelMap[src] || src];
-      if (raw.keyword) tags.push(raw.keyword);
-      if (raw.owner) tags.push(raw.owner);
+      if (raw.keyword && raw.keyword !== '36kr') tags.push(raw.keyword);
+      if (raw.media && src === 'google_news') tags.push(raw.media);
 
       items.push({
         id: uid(),
         title: decodeEntities(title),
-        summary: decodeEntities(raw.desc || raw.excerpt || raw.summary || raw.label || ''),
+        summary: decodeEntities(raw.desc || raw.excerpt || raw.summary || ''),
         source: sourceMap[src] || 'web',
         sourceUrl: raw.url || '',
         industry: [],
         category,
         tags,
         metrics: metricsObj,
-        createdAt: raw.time || now(),
+        createdAt: raw.pubdate || raw.time || now(),
         importance,
       });
     }
@@ -142,120 +135,20 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 }
 
 // ============================================================
-// 模式二: Vercel 直连兜底 (头条能通, 其他看运气)
-// ============================================================
-
-async function safeFetch(url: string, opts?: RequestInit): Promise<Response | null> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, { ...opts, signal: controller.signal });
-    clearTimeout(timer);
-    return res;
-  } catch { return null; }
-}
-
-async function collectToutiaoFallback(): Promise<IntelItem[]> {
-  const items: IntelItem[] = [];
-  try {
-    const res = await safeFetch('https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc', {
-      headers: { 'User-Agent': UA },
-    });
-    if (!res || !res.ok) return items;
-    const data = await res.json();
-    for (const entry of (data.data || [])) {
-      items.push({
-        id: uid(),
-        title: entry.Title || '',
-        summary: entry.Label || '',
-        source: 'toutiao',
-        sourceUrl: entry.Url || '',
-        industry: [],
-        category: 'market',
-        tags: ['头条热榜'],
-        metrics: { 热度: String(entry.HotValue || '') },
-        createdAt: now(),
-        importance: isRelevant(entry.Title) ? 1 : 3,
-      });
-    }
-  } catch (e) { console.error('[头条兜底]', e); }
-  return items;
-}
-
-async function collectGitHub(): Promise<IntelItem[]> {
-  const keywords = [
-    '3D interior design', 'AI interior design', 'BIM open source',
-    'room layout generator', 'kitchen design software', 'three.js interior',
-    'parametric furniture', 'AI rendering architecture',
-  ];
-  const items: IntelItem[] = [];
-
-  for (const kw of keywords) {
-    try {
-      const res = await safeFetch(
-        `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}&sort=stars&order=desc&per_page=5`,
-        { headers: { 'Accept': 'application/vnd.github+json' } }
-      );
-      if (!res || !res.ok) continue;
-      const data = await res.json();
-      for (const repo of (data.items || []).slice(0, 5)) {
-        items.push({
-          id: uid(),
-          title: `${repo.full_name}: ${(repo.description || '').slice(0, 150)}`,
-          summary: `⭐${repo.stargazers_count.toLocaleString()} | ${repo.language || 'N/A'} | Fork ${repo.forks_count}`,
-          source: 'github',
-          sourceUrl: repo.html_url,
-          industry: ['定制家具'],
-          category: 'tech',
-          tags: [kw, repo.language || 'code'],
-          metrics: { stars: String(repo.stargazers_count), forks: String(repo.forks_count) },
-          createdAt: repo.updated_at || now(),
-          importance: repo.stargazers_count > 5000 ? 1 : repo.stargazers_count > 500 ? 2 : 3,
-        });
-      }
-    } catch (e) { console.error(`[GitHub] "${kw}":`, e); }
-  }
-
-  const seen = new Set<string>();
-  return items.filter(item => {
-    if (seen.has(item.sourceUrl!)) return false;
-    seen.add(item.sourceUrl!);
-    return true;
-  });
-}
-
-// ============================================================
 // 聚合采集
 // ============================================================
 export async function collectAll(): Promise<IntelItem[]> {
-  console.log('[Collector] Starting...');
-  console.log(`[Collector] CRAWLER_API_URL = ${CRAWLER_API || '(未配置, 用Vercel直连兜底)'}`);
+  console.log('[Collector] Starting v4...');
+  console.log(`[Collector] CRAWLER_API_URL = ${CRAWLER_API || '(未配置)'}`);
 
-  // 优先用国内爬虫API
   const crawlerItems = await collectFromCrawlerAPI();
 
-  let allItems: IntelItem[];
-
-  if (crawlerItems.length > 50) {
-    // 爬虫API正常, 只补充 GitHub
-    const github = await collectGitHub().catch(() => [] as IntelItem[]);
-    allItems = [...crawlerItems, ...github];
-    console.log(`[Collector] Mode: CrawlerAPI (${crawlerItems.length}) + GitHub (${github.length})`);
-  } else {
-    // 爬虫API不可用, 用Vercel直连兜底
-    console.log('[Collector] CrawlerAPI unavailable, falling back to direct fetch...');
-    const [toutiao, github] = await Promise.allSettled([
-      collectToutiaoFallback(),
-      collectGitHub(),
-    ]);
-    allItems = [
-      ...(toutiao.status === 'fulfilled' ? toutiao.value : []),
-      ...(github.status === 'fulfilled' ? github.value : []),
-    ];
-    console.log(`[Collector] Mode: Fallback (${allItems.length} items)`);
+  if (crawlerItems.length > 0) {
+    crawlerItems.sort((a, b) => a.importance - b.importance);
+    console.log(`[Collector] Total: ${crawlerItems.length} items from CrawlerAPI`);
+    return crawlerItems;
   }
 
-  allItems.sort((a, b) => a.importance - b.importance);
-  console.log(`[Collector] Total: ${allItems.length} items`);
-  return allItems;
+  console.log('[Collector] CrawlerAPI returned 0 items');
+  return [];
 }
