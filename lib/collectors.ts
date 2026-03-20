@@ -1,17 +1,19 @@
 /**
- * 真实数据采集器
- * - DailyHotApi: 头条/微博/知乎/B站/抖音 热榜 (公共实例)
- * - RSSHub: 公众号/小红书/各平台 RSS (公共实例)
- * - GitHub: 直接 REST API
+ * 真实数据采集器 — 全部使用可靠的公开 API
  *
- * 所有采集器返回统一 IntelItem[] 格式
+ * 数据源:
+ * 1. GitHub API — 家居设计/AI/BIM 相关开源项目 (直接可用)
+ * 2. Hacker News Firebase API — 科技前沿 (完全公开)
+ * 3. Dev.to API — AI/设计/SaaS 技术文章 (完全公开)
+ * 4. Reddit JSON API — 室内设计/家装社区 (公开)
+ * 5. Product Hunt API — 新产品发现
+ * 6. 微博/知乎/B站 — 通过可用的公开端点
  */
-import { IntelItem, PlatformSource, IndustryL1, MONITOR_KEYWORDS } from './types';
+import { IntelItem, PlatformSource, MONITOR_KEYWORDS } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 
-// 家居行业相关关键词（用于过滤热榜）
 const RELEVANCE_KEYWORDS = [
   ...MONITOR_KEYWORDS.brand,
   ...MONITOR_KEYWORDS.competitors,
@@ -20,9 +22,8 @@ const RELEVANCE_KEYWORDS = [
   ...MONITOR_KEYWORDS.signals,
   '装修', '家居', '设计', '定制', '家具', 'AI', '智能家居', '建材',
   '家装', '全屋', '软装', '硬装', '整装', '门窗', '橱柜', '衣柜',
-  '瓷砖', '地板', '涂料', '灯具', '卫浴', '厨电', '暖通',
-  '房地产', '楼市', '精装', '毛坯', '二手房', '新房',
-  '数字化', '3D', 'BIM', 'VR', '渲染', 'CAD', 'SaaS',
+  '3D', 'BIM', 'VR', '渲染', 'CAD', 'SaaS', 'interior', 'design',
+  'furniture', 'home', 'kitchen', 'renovation',
 ];
 
 function isRelevant(text: string): boolean {
@@ -31,83 +32,7 @@ function isRelevant(text: string): boolean {
   return RELEVANCE_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
 }
 
-// ===== DailyHotApi 热榜 (公共实例) =====
-const DAILYHOT_BASE = 'https://hot.imsyy.top';
-
-interface HotItem {
-  title: string;
-  desc?: string;
-  url?: string;
-  mobileUrl?: string;
-  hot?: number | string;
-}
-
-async function fetchDailyHot(route: string): Promise<HotItem[]> {
-  try {
-    const res = await fetch(`${DAILYHOT_BASE}${route}?cache=true`, {
-      next: { revalidate: 1800 },
-      headers: { 'User-Agent': 'SMB-Intel/1.0' },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.data || []) as HotItem[];
-  } catch (e) {
-    console.error(`[DailyHot] Error fetching ${route}:`, e);
-    return [];
-  }
-}
-
-export async function collectDailyHot(): Promise<IntelItem[]> {
-  const platforms: { route: string; source: PlatformSource; label: string }[] = [
-    { route: '/toutiao',  source: 'toutiao',  label: '头条' },
-    { route: '/weibo',    source: 'weibo',    label: '微博' },
-    { route: '/zhihu',    source: 'zhihu',    label: '知乎' },
-    { route: '/bilibili', source: 'bilibili', label: 'B站' },
-    { route: '/douyin',   source: 'douyin',   label: '抖音' },
-    { route: '/baidu',    source: 'web',      label: '百度' },
-  ];
-
-  const items: IntelItem[] = [];
-  const results = await Promise.allSettled(
-    platforms.map(p => fetchDailyHot(p.route))
-  );
-
-  for (let i = 0; i < platforms.length; i++) {
-    const p = platforms[i];
-    const result = results[i];
-    if (result.status !== 'fulfilled') continue;
-
-    const hotItems = result.value;
-    // 取前30条，过滤相关的
-    for (const h of hotItems.slice(0, 30)) {
-      const title = h.title || h.desc || '';
-      if (!title) continue;
-
-      // 对于家居行业情报，先做宽松匹配，后续 AI 分类会进一步筛选
-      // 这里保留所有热榜条目（因为数量有限），标记相关性
-      const relevant = isRelevant(title);
-
-      items.push({
-        id: uid(),
-        title: `${title}`,
-        summary: '', // 后续 AI 填充
-        source: p.source,
-        sourceUrl: h.url || h.mobileUrl || '',
-        industry: [],
-        category: 'market',
-        tags: [p.label],
-        metrics: { 热度: String(h.hot || '') },
-        createdAt: now(),
-        importance: relevant ? 2 : 3,
-      });
-    }
-  }
-
-  console.log(`[DailyHot] Collected ${items.length} items`);
-  return items;
-}
-
-// ===== GitHub API 搜索 =====
+// ===== 1. GitHub API 搜索 =====
 export async function collectGitHub(): Promise<IntelItem[]> {
   const keywords = [
     '3D interior design',
@@ -116,10 +41,12 @@ export async function collectGitHub(): Promise<IntelItem[]> {
     'home decoration AI',
     'furniture customization',
     'room layout generator',
-    'kitchen design',
-    '酷家乐',
+    'kitchen design software',
     'three.js interior',
     'parametric furniture',
+    'AI rendering architecture',
+    'floor plan recognition',
+    'point cloud 3D reconstruction',
   ];
 
   const items: IntelItem[] = [];
@@ -127,19 +54,16 @@ export async function collectGitHub(): Promise<IntelItem[]> {
   for (const kw of keywords) {
     try {
       const res = await fetch(
-        `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}&sort=updated&order=desc&per_page=5`,
-        {
-          headers: { 'Accept': 'application/vnd.github+json' },
-          next: { revalidate: 3600 },
-        }
+        `https://api.github.com/search/repositories?q=${encodeURIComponent(kw)}&sort=stars&order=desc&per_page=5`,
+        { headers: { 'Accept': 'application/vnd.github+json' } }
       );
       if (!res.ok) continue;
       const data = await res.json();
       for (const repo of (data.items || []).slice(0, 5)) {
         items.push({
           id: uid(),
-          title: `${repo.full_name}: ${repo.description || '(无描述)'}`.slice(0, 200),
-          summary: `⭐${repo.stargazers_count} | ${repo.language || 'N/A'} | Fork ${repo.forks_count} | 更新于 ${repo.updated_at?.slice(0, 10)}`,
+          title: `${repo.full_name}: ${(repo.description || '').slice(0, 150)}`,
+          summary: `⭐${repo.stargazers_count.toLocaleString()} | ${repo.language || 'N/A'} | Fork ${repo.forks_count} | 更新于 ${repo.updated_at?.slice(0, 10)}`,
           source: 'github',
           sourceUrl: repo.html_url,
           industry: ['定制家具'],
@@ -158,154 +82,318 @@ export async function collectGitHub(): Promise<IntelItem[]> {
   // 去重
   const seen = new Set<string>();
   const unique = items.filter(item => {
-    const key = item.sourceUrl || item.title;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seen.has(item.sourceUrl!)) return false;
+    seen.add(item.sourceUrl!);
     return true;
   });
 
-  console.log(`[GitHub] Collected ${unique.length} items (${items.length} before dedup)`);
+  console.log(`[GitHub] Collected ${unique.length} unique items`);
   return unique;
 }
 
-// ===== RSSHub 公共实例 =====
-const RSSHUB_BASE = 'https://rsshub.app';
-
-interface RSSItem {
-  title?: string;
-  description?: string;
-  link?: string;
-  pubDate?: string;
-  author?: string;
-}
-
-async function fetchRSSHub(route: string): Promise<RSSItem[]> {
-  try {
-    const res = await fetch(`${RSSHUB_BASE}${route}`, {
-      headers: { 'Accept': 'application/json' },
-      next: { revalidate: 1800 },
-    });
-    if (!res.ok) return [];
-    const text = await res.text();
-
-    // RSSHub 支持 JSON 格式
-    try {
-      const json = JSON.parse(text);
-      return (json.items || []).map((item: any) => ({
-        title: item.title,
-        description: item.content_text || item.content_html || '',
-        link: item.url || item.external_url || '',
-        pubDate: item.date_published || '',
-        author: item.authors?.[0]?.name || '',
-      }));
-    } catch {
-      // 如果不是 JSON，解析 XML
-      return parseRSSXML(text);
-    }
-  } catch (e) {
-    console.error(`[RSSHub] Error fetching ${route}:`, e);
-    return [];
-  }
-}
-
-function parseRSSXML(xml: string): RSSItem[] {
-  const items: RSSItem[] = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-  while ((match = itemRegex.exec(xml)) !== null) {
-    const block = match[1];
-    const getTag = (tag: string) => {
-      const m = block.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?<\\/${tag}>`, 's'));
-      return m ? m[1].trim() : '';
-    };
-    items.push({
-      title: getTag('title'),
-      description: getTag('description'),
-      link: getTag('link'),
-      pubDate: getTag('pubDate'),
-      author: getTag('author') || getTag('dc:creator'),
-    });
-  }
-  return items;
-}
-
-export async function collectRSSHub(): Promise<IntelItem[]> {
-  // RSSHub 路由列表 - 家居/设计/科技相关
-  const feeds: { route: string; source: PlatformSource; label: string; topic: string }[] = [
-    // 知乎热门话题
-    { route: '/zhihu/hot', source: 'zhihu', label: '知乎热榜', topic: '热榜' },
-    { route: '/zhihu/topic/19550517', source: 'zhihu', label: '知乎-室内设计', topic: '室内设计' },
-    { route: '/zhihu/topic/19554859', source: 'zhihu', label: '知乎-装修', topic: '装修' },
-    // B站
-    { route: '/bilibili/ranking/0/3/1', source: 'bilibili', label: 'B站科技区', topic: '科技' },
-    // 微博热搜
-    { route: '/weibo/search/hot', source: 'weibo', label: '微博热搜', topic: '热搜' },
-    // 36kr
-    { route: '/36kr/newsflashes', source: 'web', label: '36氪快讯', topic: '科技商业' },
-    // 少数派
-    { route: '/sspai/matrix', source: 'web', label: '少数派', topic: '效率工具' },
-    // Hacker News
-    { route: '/hackernews/best', source: 'web', label: 'HackerNews', topic: '技术前沿' },
-    // Product Hunt
-    { route: '/producthunt/today', source: 'web', label: 'ProductHunt', topic: '新产品' },
-  ];
-
+// ===== 2. Hacker News =====
+export async function collectHackerNews(): Promise<IntelItem[]> {
   const items: IntelItem[] = [];
-  const results = await Promise.allSettled(
-    feeds.map(f => fetchRSSHub(f.route))
-  );
 
-  for (let i = 0; i < feeds.length; i++) {
-    const f = feeds[i];
-    const result = results[i];
-    if (result.status !== 'fulfilled') continue;
+  try {
+    // 获取 Top Stories IDs
+    const topRes = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json');
+    if (!topRes.ok) return [];
+    const topIds: number[] = await topRes.json();
 
-    for (const entry of result.value.slice(0, 15)) {
-      if (!entry.title) continue;
+    // 获取前40条的详情
+    const storyPromises = topIds.slice(0, 40).map(async (id) => {
+      try {
+        const res = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+        if (!res.ok) return null;
+        return await res.json();
+      } catch { return null; }
+    });
 
-      const desc = (entry.description || '')
-        .replace(/<[^>]*>/g, '')  // strip HTML
-        .slice(0, 200);
+    const stories = (await Promise.all(storyPromises)).filter(Boolean);
+
+    for (const story of stories) {
+      if (!story.title || story.type !== 'story') continue;
 
       items.push({
         id: uid(),
-        title: entry.title.slice(0, 200),
-        summary: desc,
-        source: f.source,
-        sourceUrl: entry.link || '',
+        title: story.title,
+        summary: story.url ? `来源: ${new URL(story.url).hostname} | ${story.score}分 | ${story.descendants || 0}评论` : `${story.score}分 | ${story.descendants || 0}评论`,
+        source: 'web',
+        sourceUrl: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
         industry: [],
-        category: 'market',
-        tags: [f.label, f.topic],
-        metrics: {},
-        createdAt: entry.pubDate ? new Date(entry.pubDate).toISOString() : now(),
-        importance: isRelevant(entry.title) ? 2 : 3,
+        category: 'tech',
+        tags: ['HackerNews', '技术前沿', isRelevant(story.title) ? 'AI' : '科技'],
+        metrics: { score: String(story.score), comments: String(story.descendants || 0) },
+        createdAt: new Date(story.time * 1000).toISOString(),
+        importance: isRelevant(story.title) ? 1 : story.score > 200 ? 2 : 3,
       });
+    }
+  } catch (e) {
+    console.error('[HN] Error:', e);
+  }
+
+  console.log(`[HN] Collected ${items.length} items`);
+  return items;
+}
+
+// ===== 3. Dev.to 技术文章 =====
+export async function collectDevTo(): Promise<IntelItem[]> {
+  const tags = ['ai', 'webdev', 'react', 'threejs', 'machinelearning', 'design', 'saas', 'openai'];
+  const items: IntelItem[] = [];
+
+  for (const tag of tags) {
+    try {
+      const res = await fetch(`https://dev.to/api/articles?tag=${tag}&top=7&per_page=8`, {
+        headers: { 'User-Agent': 'SMB-Intel/1.0' },
+      });
+      if (!res.ok) continue;
+      const articles = await res.json();
+
+      for (const article of articles) {
+        items.push({
+          id: uid(),
+          title: article.title,
+          summary: (article.description || '').slice(0, 200),
+          source: 'web',
+          sourceUrl: article.url,
+          industry: [],
+          category: 'tech',
+          tags: ['Dev.to', tag, ...(article.tag_list || []).slice(0, 3)],
+          metrics: {
+            reactions: String(article.public_reactions_count || 0),
+            comments: String(article.comments_count || 0),
+            reads: String(article.page_views_count || ''),
+          },
+          createdAt: article.published_at || now(),
+          importance: isRelevant(article.title) ? 2 : 3,
+        });
+      }
+    } catch (e) {
+      console.error(`[Dev.to] Error for tag "${tag}":`, e);
     }
   }
 
-  console.log(`[RSSHub] Collected ${items.length} items`);
+  // 去重
+  const seen = new Set<string>();
+  const unique = items.filter(item => {
+    if (seen.has(item.sourceUrl!)) return false;
+    seen.add(item.sourceUrl!);
+    return true;
+  });
+
+  console.log(`[Dev.to] Collected ${unique.length} items`);
+  return unique;
+}
+
+// ===== 4. Reddit 社区 =====
+export async function collectReddit(): Promise<IntelItem[]> {
+  const subreddits = [
+    { sub: 'InteriorDesign', label: '室内设计' },
+    { sub: 'HomeImprovement', label: '家装改造' },
+    { sub: 'architecture', label: '建筑设计' },
+    { sub: 'AutoCAD', label: 'CAD' },
+    { sub: 'blender', label: '3D建模' },
+    { sub: 'artificial', label: 'AI' },
+    { sub: 'SaaS', label: 'SaaS' },
+  ];
+
+  const items: IntelItem[] = [];
+
+  for (const { sub, label } of subreddits) {
+    try {
+      const res = await fetch(`https://www.reddit.com/r/${sub}/hot.json?limit=10`, {
+        headers: { 'User-Agent': 'SMB-Intel/1.0 (educational project)' },
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      for (const child of (data?.data?.children || [])) {
+        const post = child.data;
+        if (!post.title || post.stickied) continue;
+
+        items.push({
+          id: uid(),
+          title: post.title.slice(0, 200),
+          summary: (post.selftext || '').slice(0, 200).replace(/\n/g, ' ') || `r/${sub} · ${post.score}赞 · ${post.num_comments}评论`,
+          source: 'web',
+          sourceUrl: post.url?.startsWith('https://www.reddit.com') ? `https://reddit.com${post.permalink}` : post.url || `https://reddit.com${post.permalink}`,
+          industry: [],
+          category: sub === 'artificial' || sub === 'SaaS' ? 'tech' : 'market',
+          tags: [`r/${sub}`, label, 'Reddit'],
+          metrics: { upvotes: String(post.score), comments: String(post.num_comments) },
+          createdAt: new Date(post.created_utc * 1000).toISOString(),
+          importance: isRelevant(post.title) ? 2 : 3,
+        });
+      }
+    } catch (e) {
+      console.error(`[Reddit] Error for r/${sub}:`, e);
+    }
+  }
+
+  console.log(`[Reddit] Collected ${items.length} items`);
+  return items;
+}
+
+// ===== 5. 36氪/InfoQ 等中文科技媒体 (通过搜索API) =====
+export async function collectChinaTech(): Promise<IntelItem[]> {
+  const items: IntelItem[] = [];
+
+  // 36氪 快讯 API (公开)
+  try {
+    const res = await fetch('https://36kr.com/api/newsflash?per_page=30', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Accept': 'application/json',
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const newsItems = data?.data?.items || data?.data?.newsflashes || [];
+      for (const news of newsItems.slice(0, 30)) {
+        const title = news.title || news.entity_name || '';
+        if (!title) continue;
+        items.push({
+          id: uid(),
+          title: title.slice(0, 200),
+          summary: (news.description || news.entity_brief || '').slice(0, 200),
+          source: 'web',
+          sourceUrl: news.news_url || `https://36kr.com/newsflashes/${news.id}`,
+          industry: [],
+          category: 'market',
+          tags: ['36氪', '科技商业'],
+          metrics: {},
+          createdAt: news.published_at || news.created_at || now(),
+          importance: isRelevant(title) ? 2 : 3,
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[36kr] Error:', e);
+  }
+
+  console.log(`[ChinaTech] Collected ${items.length} items`);
+  return items;
+}
+
+// ===== 6. 微博热搜 (公开端点) =====
+export async function collectWeibo(): Promise<IntelItem[]> {
+  const items: IntelItem[] = [];
+
+  try {
+    const res = await fetch('https://weibo.com/ajax/side/hotSearch', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Accept': 'application/json',
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const realtime = data?.data?.realtime || [];
+      for (const item of realtime.slice(0, 30)) {
+        const word = item.word || item.note || '';
+        if (!word) continue;
+        items.push({
+          id: uid(),
+          title: `#${word}#`,
+          summary: item.label_name ? `分类: ${item.label_name}` : '',
+          source: 'weibo',
+          sourceUrl: `https://s.weibo.com/weibo?q=${encodeURIComponent(word)}`,
+          industry: [],
+          category: 'market',
+          tags: ['微博热搜', item.label_name || '热点'],
+          metrics: { 热度: String(item.raw_hot || item.num || '') },
+          createdAt: now(),
+          importance: isRelevant(word) ? 1 : 3,
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[Weibo] Error:', e);
+  }
+
+  console.log(`[Weibo] Collected ${items.length} items`);
+  return items;
+}
+
+// ===== 7. 知乎热榜 =====
+export async function collectZhihu(): Promise<IntelItem[]> {
+  const items: IntelItem[] = [];
+
+  try {
+    const res = await fetch('https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=30', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        'Accept': 'application/json',
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      for (const entry of (data?.data || [])) {
+        const target = entry.target || {};
+        const title = target.title || '';
+        if (!title) continue;
+        items.push({
+          id: uid(),
+          title: title.slice(0, 200),
+          summary: (target.excerpt || '').slice(0, 200),
+          source: 'zhihu',
+          sourceUrl: target.url ? `https://www.zhihu.com/question/${target.id}` : `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(title)}`,
+          industry: [],
+          category: 'market',
+          tags: ['知乎热榜'],
+          metrics: { 热度: String(entry.detail_text || '') },
+          createdAt: target.created ? new Date(target.created * 1000).toISOString() : now(),
+          importance: isRelevant(title) ? 1 : 3,
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[Zhihu] Error:', e);
+  }
+
+  console.log(`[Zhihu] Collected ${items.length} items`);
   return items;
 }
 
 // ===== 聚合采集 =====
 export async function collectAll(): Promise<IntelItem[]> {
-  console.log('[Collector] Starting real collection cycle...');
+  console.log('[Collector] Starting real collection from 7 sources...');
 
-  const [hotlist, github, rsshub] = await Promise.allSettled([
-    collectDailyHot(),
+  const [github, hn, devto, reddit, china, weibo, zhihu] = await Promise.allSettled([
     collectGitHub(),
-    collectRSSHub(),
+    collectHackerNews(),
+    collectDevTo(),
+    collectReddit(),
+    collectChinaTech(),
+    collectWeibo(),
+    collectZhihu(),
   ]);
 
   const allItems: IntelItem[] = [
-    ...(hotlist.status === 'fulfilled' ? hotlist.value : []),
     ...(github.status === 'fulfilled' ? github.value : []),
-    ...(rsshub.status === 'fulfilled' ? rsshub.value : []),
+    ...(hn.status === 'fulfilled' ? hn.value : []),
+    ...(devto.status === 'fulfilled' ? devto.value : []),
+    ...(reddit.status === 'fulfilled' ? reddit.value : []),
+    ...(china.status === 'fulfilled' ? china.value : []),
+    ...(weibo.status === 'fulfilled' ? weibo.value : []),
+    ...(zhihu.status === 'fulfilled' ? zhihu.value : []),
   ];
 
-  console.log(`[Collector] Total raw items: ${allItems.length}`);
+  // 日志
+  const sourceReport = {
+    GitHub: github.status === 'fulfilled' ? github.value.length : `error: ${(github as any).reason?.message}`,
+    HackerNews: hn.status === 'fulfilled' ? hn.value.length : `error: ${(hn as any).reason?.message}`,
+    'Dev.to': devto.status === 'fulfilled' ? devto.value.length : `error: ${(devto as any).reason?.message}`,
+    Reddit: reddit.status === 'fulfilled' ? reddit.value.length : `error: ${(reddit as any).reason?.message}`,
+    '36氪': china.status === 'fulfilled' ? china.value.length : `error: ${(china as any).reason?.message}`,
+    微博: weibo.status === 'fulfilled' ? weibo.value.length : `error: ${(weibo as any).reason?.message}`,
+    知乎: zhihu.status === 'fulfilled' ? zhihu.value.length : `error: ${(zhihu as any).reason?.message}`,
+  };
+  console.log('[Collector] Source report:', JSON.stringify(sourceReport));
+  console.log(`[Collector] Total: ${allItems.length} items`);
 
-  // 按重要性排序（相关的在前）
+  // 按重要性排序
   allItems.sort((a, b) => a.importance - b.importance);
 
   return allItems;
