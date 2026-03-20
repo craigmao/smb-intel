@@ -54,6 +54,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
     const items: IntelItem[] = [];
     const sourceMap: Record<string, PlatformSource> = {
       // 搜索类 (行业定向)
+      wechat: 'wechat_mp',
       toutiao: 'toutiao',
       weibo: 'weibo',
       zhihu: 'zhihu',
@@ -69,6 +70,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
     const labelMap: Record<string, string> = {
       // 搜索类
+      wechat: '微信公众号',
       toutiao: '头条搜索',
       weibo: '微博搜索',
       zhihu: '知乎搜索',
