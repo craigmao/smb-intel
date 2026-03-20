@@ -101,7 +101,7 @@ async function collectFromCrawlerAPI(): Promise<IntelItem[]> {
 
       // 搜索类数据已经是行业定向的, 默认高相关性
       // 热榜类数据需要通过关键词匹配判断相关性
-      const importance = isSearch ? 1 : (isRelevant(title) ? 2 : 4);
+      const importance: 1 | 2 | 3 = isSearch ? 1 : (isRelevant(title) ? 2 : 3);
 
       // 分类: 搜索类按平台分; 热榜类统一归大盘
       let category: IntelCategory;
