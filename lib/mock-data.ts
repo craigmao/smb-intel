@@ -4,24 +4,33 @@ import { IntelItem, DailyBrief, PlatformSource, IntelCategory, IndustryL1 } from
 const uid = () => Math.random().toString(36).slice(2, 10);
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600000).toISOString();
 
-// 平台URL模板
-const urlTemplates: Record<PlatformSource, (keyword: string, id: string) => string> = {
-  xiaohongshu: (kw, id) => `https://www.xiaohongshu.com/explore/${id}?xsec_token=demo`,
-  wechat_mp: (kw, id) => `https://mp.weixin.qq.com/s/${id}`,
-  wechat_video: (kw, id) => `https://channels.weixin.qq.com/platform/post/detail?id=${id}`,
-  douyin: (kw, id) => `https://www.douyin.com/video/${id}`,
-  toutiao: (kw, id) => `https://www.toutiao.com/article/${id}`,
-  weibo: (kw, id) => `https://weibo.com/detail/${id}`,
-  zhihu: (kw, id) => `https://www.zhihu.com/question/${id}`,
-  bilibili: (kw, id) => `https://www.bilibili.com/video/BV${id}`,
-  github: (kw, id) => `https://github.com/${id}`,
-  web: (kw, id) => `https://www.baidu.com/s?wd=${encodeURIComponent(kw)}`,
+// 平台搜索URL模板 — 点击后跳转到对应平台的搜索结果页
+const urlTemplates: Record<PlatformSource, (keyword: string) => string> = {
+  xiaohongshu: (kw) => `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(kw)}&type=1`,
+  wechat_mp: (kw) => `https://weixin.sogou.com/weixin?type=2&query=${encodeURIComponent(kw)}`,
+  wechat_video: (kw) => `https://weixin.sogou.com/weixin?type=2&query=${encodeURIComponent(kw)}`,
+  douyin: (kw) => `https://www.douyin.com/search/${encodeURIComponent(kw)}`,
+  toutiao: (kw) => `https://so.toutiao.com/search?keyword=${encodeURIComponent(kw)}`,
+  weibo: (kw) => `https://s.weibo.com/weibo?q=${encodeURIComponent(kw)}`,
+  zhihu: (kw) => `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(kw)}`,
+  bilibili: (kw) => `https://search.bilibili.com/all?keyword=${encodeURIComponent(kw)}`,
+  github: (kw) => `https://github.com/search?q=${encodeURIComponent(kw)}&type=repositories`,
+  web: (kw) => `https://www.baidu.com/s?wd=${encodeURIComponent(kw)}`,
   sales_upload: () => '',
 };
 
-function makeUrl(source: PlatformSource, keyword: string): string {
-  const fakeId = Math.random().toString(36).slice(2, 14);
-  return urlTemplates[source](keyword, fakeId);
+// 从标题中提取核心搜索关键词
+function extractKeyword(title: string): string {
+  // 去掉前缀标记
+  let t = title.replace(/^\[.*?\]\s*/, '').replace(/^"/, '').replace(/".*/, '');
+  // 取前15个字符作为关键词，避免太长
+  if (t.length > 15) t = t.slice(0, 15);
+  return t;
+}
+
+function makeUrl(source: PlatformSource, title: string): string {
+  const keyword = extractKeyword(title);
+  return urlTemplates[source](keyword);
 }
 
 function randomMetrics(source: PlatformSource): Record<string, string> {
