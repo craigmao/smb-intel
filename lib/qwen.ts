@@ -3,7 +3,7 @@ import { IntelItem, IntelCategory, IndustryL1, INDUSTRIES, SalesUpload } from '.
 
 // Qwen API 兼容 OpenAI SDK
 const qwen = new OpenAI({
-  apiKey: process.env.QWEN_API_KEY || 'sk-e58592b1620d4ff5940fcec9ebcc1788',
+  apiKey: 'sk-e58592b1620d4ff5940fcec9ebcc1788',
   baseURL: process.env.QWEN_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
 });
 
